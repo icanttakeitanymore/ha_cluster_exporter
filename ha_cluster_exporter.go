@@ -11,6 +11,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/promlog"
+
 	// cannot use as setConfigDefault function will not work here
 	// log.level and log.format flags are set in vars/init
 	// "github.com/prometheus/common/promlog/flag"
@@ -48,6 +49,7 @@ var (
 	haClusterCibadminPath            *string
 	haClusterCorosyncCfgtoolpathPath *string
 	haClusterCorosyncQuorumtoolPath  *string
+	haClusterCorosyncCmapctltoolPath *string
 	haClusterSbdPath                 *string
 	haClusterSbdConfigPath           *string
 	haClusterDrbdsetupPath           *string
@@ -108,6 +110,10 @@ func init() {
 		"corosync-quorumtool-path",
 		"path to corosync-quorumtool executable",
 	).PlaceHolder("/usr/sbin/corosync-quorumtool").Default(setConfigDefault("corosync-quorumtool-path", "/usr/sbin/corosync-quorumtool")).String()
+	haClusterCorosyncCmapctltoolPath = kingpin.Flag(
+		"corosync-cmapctl-path",
+		"path to corosync-cmapctl executable",
+	).PlaceHolder("/usr/sbin/corosync-cmapctl").Default(setConfigDefault("corosync-cmapctl-path", "/usr/sbin/corosync-cmapctl")).String()
 	haClusterSbdPath = kingpin.Flag(
 		"sbd-path",
 		"path to sbd executable",
@@ -213,6 +219,7 @@ func registerCollectors(logger log.Logger) (collectors []prometheus.Collector, e
 	corosyncCollector, err := corosync.NewCollector(
 		*haClusterCorosyncCfgtoolpathPath,
 		*haClusterCorosyncQuorumtoolPath,
+		*haClusterCorosyncCmapctltoolPath,
 		*enableTimestampsDeprecated,
 		logger,
 	)

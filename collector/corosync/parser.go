@@ -9,16 +9,17 @@ import (
 )
 
 type Parser interface {
-	Parse(cfgToolOutput []byte, quorumToolOutput []byte) (*Status, error)
+	Parse(cfgToolOutput []byte, quorumToolOutput []byte, cmapctlToolPath []byte) (*Status, error)
 }
 
 type Status struct {
-	NodeId      string
-	RingId      string
-	Rings       []Ring
-	QuorumVotes QuorumVotes
-	Quorate     bool
-	Members     []Member
+	NodeId          string
+	RingId          string
+	Rings           []Ring
+	QuorumVotes     QuorumVotes
+	Quorate         bool
+	Members         []Member
+	RuntimeServices []RuntimeServices
 }
 
 type QuorumVotes struct {
@@ -42,13 +43,19 @@ type Member struct {
 	Local   bool
 }
 
-func NewParser() Parser {
-	return &defaultParser{}
+type RuntimeServices struct {
+	ServiceType string
+	ServiceId   string
+	Direction   string
+	Value       string
 }
 
 type defaultParser struct{}
 
-func (p *defaultParser) Parse(cfgToolOutput []byte, quorumToolOutput []byte) (*Status, error) {
+func NewParser() Parser {
+	return &defaultParser{}
+}
+func (p *defaultParser) Parse(cfgToolOutput []byte, quorumToolOutput []byte, cmapctlToolPath []byte) (*Status, error) {
 	status := &Status{}
 	var err error
 
@@ -79,6 +86,7 @@ func (p *defaultParser) Parse(cfgToolOutput []byte, quorumToolOutput []byte) (*S
 
 	status.Rings = parseRings(cfgToolOutput)
 
+	status.RuntimeServices = parseRuntimeServices(cmapctlToolPath)
 	return status, nil
 }
 
@@ -205,6 +213,38 @@ func parseQuoromVotes(quorumToolOutput []byte) (quorumVotes QuorumVotes, err err
 	}
 
 	return quorumVotes, nil
+}
+
+func parseRuntimeServices(cmapctlToolPath []byte) (items []RuntimeServices) {
+	/*
+		runtime.services.cpg.0.rx (u64) = 9
+		runtime.services.cpg.0.tx (u64) = 7
+		runtime.services.cpg.1.rx (u64) = 0
+		runtime.services.cpg.1.tx (u64) = 0
+		runtime.services.cpg.2.rx (u64) = 60
+		runtime.services.cpg.2.tx (u64) = 10
+		runtime.services.cpg.3.rx (u64) = 1257739
+		runtime.services.cpg.3.tx (u64) = 117854
+		runtime.services.cpg.4.rx (u64) = 0
+		runtime.services.cpg.4.tx (u64) = 0
+		runtime.services.cpg.5.rx (u64) = 66
+		runtime.services.cpg.5.tx (u64) = 11
+	*/
+	re := regexp.MustCompile(`runtime\.services\.(?P<service_type>[a-zA-Z]+)\.(?P<service_id>\d+)\.(?P<direction>rx|tx) \(u\d{2}\) = (?P<value>\d+)`)
+	matches := re.FindAllSubmatch(cmapctlToolPath, -1)
+
+	items = make([]RuntimeServices, len(matches))
+	for i, match := range matches {
+		namedMatches := extractRENamedCaptureGroups(re, match)
+
+		items[i] = RuntimeServices{
+			ServiceType: namedMatches["service_type"],
+			ServiceId:   namedMatches["service_id"],
+			Direction:   namedMatches["direction"],
+			Value:       namedMatches["value"],
+		}
+	}
+	return items
 }
 
 func parseMembers(quorumToolOutput []byte) (members []Member, err error) {

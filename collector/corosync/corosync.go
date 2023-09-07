@@ -1,7 +1,9 @@
 package corosync
 
 import (
+	"fmt"
 	"os/exec"
+	"strconv"
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -13,7 +15,10 @@ import (
 
 const subsystem = "corosync"
 
-func NewCollector(cfgToolPath string, quorumToolPath string, timestamps bool, logger log.Logger) (*corosyncCollector, error) {
+func NewCollector(cfgToolPath string, quorumToolPath string, cmapctlToolPath string, timestamps bool, logger log.Logger) (*corosyncCollector, error) {
+
+	runtime_services := []string{"cfg", "cmap", "cpg", "mon", "pload", "quorum", "votequorum", "wd"}
+	tx_rx := []string{"rx", "tx"}
 	err := collector.CheckExecutables(cfgToolPath, quorumToolPath)
 	if err != nil {
 		return nil, errors.Wrapf(err, "could not initialize '%s' collector", subsystem)
@@ -23,6 +28,7 @@ func NewCollector(cfgToolPath string, quorumToolPath string, timestamps bool, lo
 		collector.NewDefaultCollector(subsystem, timestamps, logger),
 		cfgToolPath,
 		quorumToolPath,
+		cmapctlToolPath,
 		NewParser(),
 	}
 	c.SetDescriptor("quorate", "Whether or not the cluster is quorate", nil)
@@ -31,14 +37,22 @@ func NewCollector(cfgToolPath string, quorumToolPath string, timestamps bool, lo
 	c.SetDescriptor("member_votes", "How many votes each member node has contributed with to the current quorum", []string{"node_id", "node", "local"})
 	c.SetDescriptor("quorum_votes", "Cluster quorum votes; one line per type", []string{"type"})
 
+	for _, svc := range runtime_services {
+		for _, d := range tx_rx {
+			name := fmt.Sprintf("runtime_service_%s_%s", svc, d)
+			desc := fmt.Sprintf("%s bytes for service %s", d, svc)
+			c.SetDescriptor(name, desc, []string{"service_id"})
+		}
+	}
 	return c, nil
 }
 
 type corosyncCollector struct {
 	collector.DefaultCollector
-	cfgToolPath    string
-	quorumToolPath string
-	parser         Parser
+	cfgToolPath     string
+	quorumToolPath  string
+	cmapctlToolPath string
+	parser          Parser
 }
 
 func (c *corosyncCollector) CollectWithError(ch chan<- prometheus.Metric) error {
@@ -47,8 +61,9 @@ func (c *corosyncCollector) CollectWithError(ch chan<- prometheus.Metric) error 
 	// We suppress the exec errors because if any interface is faulty the tools will exit with code 1, but we still want to parse the output.
 	cfgToolOutput, _ := exec.Command(c.cfgToolPath, "-s").Output()
 	quorumToolOutput, _ := exec.Command(c.quorumToolPath, "-p").Output()
+	cmapctlToolOutput, _ := exec.Command(c.cmapctlToolPath).Output()
 
-	status, err := c.parser.Parse(cfgToolOutput, quorumToolOutput)
+	status, err := c.parser.Parse(cfgToolOutput, quorumToolOutput, cmapctlToolOutput)
 	if err != nil {
 		return errors.Wrap(err, "corosync parser error")
 	}
@@ -58,6 +73,7 @@ func (c *corosyncCollector) CollectWithError(ch chan<- prometheus.Metric) error 
 	c.collectQuorate(status, ch)
 	c.collectQuorumVotes(status, ch)
 	c.collectMemberVotes(status, ch)
+	c.collectCmapctl(status, ch)
 
 	return nil
 }
@@ -114,4 +130,13 @@ func (c *corosyncCollector) collectMemberVotes(status *Status, ch chan<- prometh
 		}
 		ch <- c.MakeGaugeMetric("member_votes", float64(member.Votes), member.Id, member.Name, local)
 	}
+}
+
+func (c *corosyncCollector) collectCmapctl(status *Status, ch chan<- prometheus.Metric) {
+	for _, rs := range status.RuntimeServices {
+		name := fmt.Sprintf("runtime_service_%s_%s", rs.ServiceType, rs.Direction)
+		value, _ := strconv.ParseFloat(rs.Value, 64)
+		ch <- c.MakeGaugeMetric(name, value, rs.ServiceId)
+	}
+
 }
